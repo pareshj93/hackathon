@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase, isSupabaseConnected } from '@/lib/supabase';
+import { supabase, isSupabaseConnected, Profile } from '@/lib/supabase';
 import { User } from '@supabase/supabase-js';
-import { Profile } from '@/lib/supabase';
 import LeftSidebar from './LeftSidebar';
 import CenterFeed from './CenterFeed';
 import RightSidebar from './RightSidebar';
@@ -14,8 +13,6 @@ import PrivacyPage from '@/components/pages/PrivacyPage';
 import VerificationPage from '@/components/pages/VerificationPage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { toast } from 'sonner';
 import { Database, ExternalLink, CheckCircle } from 'lucide-react';
 
 export default function MainLayout() {
@@ -27,82 +24,62 @@ export default function MainLayout() {
   const searchParams = useSearchParams();
   const currentPage = searchParams.get('page') || 'feed';
 
-  useEffect(() => {
-    console.log('🔍 Checking Supabase connection...', { isSupabaseConnected });
-    
-    if (!isSupabaseConnected) {
-      console.log('❌ Supabase not connected');
-      setLoading(false);
-      return;
-    }
-
-    console.log('✅ Supabase connected, initializing auth...');
-    initializeAuth();
-
-    const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('🔄 Auth state changed:', event, session?.user?.email);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        console.log('👤 User found, fetching profile...');
-        await fetchProfile(session.user.id);
-      } else {
-        console.log('👤 No user, clearing profile...');
-        setProfile(null);
-      }
-      
-      setLoading(false);
-    });
-
-    return () => {
-      data.subscription.unsubscribe();
-    };
-  }, []);
-
-  const initializeAuth = async () => {
-    try {
-      console.log('🔍 Getting current user...');
-      const { data: { user } } = await supabase.auth.getUser();
-      console.log('👤 Current user:', user?.email || 'None');
-      
-      setUser(user);
-      
-      if (user) {
-        await fetchProfile(user.id);
-      }
-    } catch (error) {
-      console.error('❌ Error initializing auth:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const fetchProfile = async (userId: string) => {
     try {
-      console.log('📝 Fetching profile for user:', userId);
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.error('❌ Error fetching profile:', error);
-        return;
-      }
-
-      console.log('✅ Profile fetched:', data);
-      setProfile(data);
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
+        if (error) throw error;
+        setProfile(data);
     } catch (error) {
-      console.error('❌ Error in fetchProfile:', error);
+        console.error("Error fetching profile:", error);
+        setProfile(null);
     }
   };
 
-  const handleAuthSuccess = () => {
-    console.log('✅ Auth success - state will update automatically');
-  };
+  useEffect(() => {
+    // This effect runs once to determine the initial auth state and then listens for changes.
+    const getSessionAndListen = async () => {
+      // Actively get the current session on first load
+      const { data: { session } } = await supabase.auth.getSession();
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      if (currentUser) {
+        await fetchProfile(currentUser.id);
+      }
+      setLoading(false); // Stop loading after the initial check is complete
 
+      // Listen for subsequent auth events (SIGN_IN, SIGN_OUT)
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (_event, session) => {
+          const updatedUser = session?.user ?? null;
+          setUser(updatedUser);
+          if (updatedUser) {
+            await fetchProfile(updatedUser.id);
+          } else {
+            setProfile(null);
+          }
+        }
+      );
+
+      return () => {
+        subscription.unsubscribe();
+      };
+    };
+
+    getSessionAndListen();
+  }, []);
+
+  const handleAuthSuccess = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+        setUser(user);
+        await fetchProfile(user.id);
+    }
+  };
+  
   const renderPage = () => {
     if (!isSupabaseConnected) {
       return (
@@ -112,47 +89,31 @@ export default function MainLayout() {
               <Database className="w-16 h-16 text-blue-600 mx-auto mb-6" />
               <h2 className="text-2xl font-bold text-gray-900 mb-4">Connect to Supabase</h2>
               <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
-                To use SikshaSetu, you need to connect to a Supabase database. Click the "Connect to Supabase" 
-                button in the top right corner to set up your database connection.
+                To use EduBridge, you need to connect to a Supabase database. Please create a `.env.local` file with your project URL and anon key.
               </p>
-              
-              <Alert className="max-w-2xl mx-auto mb-6">
-                <Database className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="text-left">
-                    <p className="font-medium mb-2">What you'll need:</p>
-                    <ul className="text-sm space-y-1">
-                      <li>• A Supabase account (free tier available)</li>
-                      <li>• Your Supabase project URL</li>
-                      <li>• Your Supabase anon key</li>
-                    </ul>
-                  </div>
-                </AlertDescription>
-              </Alert>
-
-              <div className="space-y-4">
-                <Button 
+              <Button 
                   onClick={() => window.open('https://supabase.com', '_blank')}
                   className="bg-green-600 hover:bg-green-700"
-                >
+              >
                   <ExternalLink className="w-4 h-4 mr-2" />
                   Get Started with Supabase
-                </Button>
-                
-                <div className="text-sm text-gray-500">
-                  <p>Once connected, you'll be able to:</p>
-                  <div className="flex flex-wrap justify-center gap-4 mt-2">
-                    <span>✓ Create an account</span>
-                    <span>✓ Share wisdom</span>
-                    <span>✓ Donate resources</span>
-                    <span>✓ Get verified</span>
-                  </div>
-                </div>
-              </div>
+              </Button>
             </CardContent>
           </Card>
         </div>
       );
+    }
+
+    // Don't render child pages until the initial auth check is done.
+    if (loading) {
+         return (
+            <div className="min-h-[60vh] flex items-center justify-center">
+                <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-gray-600">Initializing Session...</p>
+                </div>
+            </div>
+        );
     }
 
     switch (currentPage) {
@@ -183,69 +144,26 @@ export default function MainLayout() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading SikshaSetu...</p>
-          {isSupabaseConnected && (
-            <div className="flex items-center justify-center mt-2 text-green-600">
-              <CheckCircle className="w-4 h-4 mr-1" />
-              <span className="text-sm">Connected to Supabase</span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+    <div className="min-h-screen bg-gray-50">
+       <nav className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div 
               className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
               onClick={() => router.push('/?page=feed')}
             >
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">SS</span>
+              <div className="w-8 h-8 bg-gradient-to-r from-teal-500 to-orange-500 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-sm">EB</span>
               </div>
-              <span className="text-xl font-bold text-gray-900">SikshaSetu</span>
+              <span className="text-xl font-bold text-gray-900">EduBridge</span>
             </div>
             
             <div className="flex items-center space-x-4">
-              {isSupabaseConnected && (
-                <div className="hidden md:flex items-center space-x-2 text-green-600">
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="text-sm">Connected</span>
-                </div>
-              )}
-              
-              {user && profile && (
-                <div className="hidden md:flex items-center space-x-2">
-                  <span className="text-sm text-gray-600">Welcome,</span>
-                  <span className="font-medium text-gray-900">{profile.username}</span>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    profile.role === 'donor' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {profile.role === 'donor' ? '❤️ Donor' : '🎓 Student'}
-                  </span>
-                  {(profile.role === 'donor' || profile.verification_status === 'verified') && (
-                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-                      ✓ Verified
-                    </span>
-                  )}
-                </div>
-              )}
-              
               {!user && isSupabaseConnected && (
                 <button
                   onClick={() => setShowAuthModal(true)}
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  className="bg-teal-600 text-white px-6 py-2 rounded-lg hover:bg-teal-700 transition-colors font-medium"
                 >
                   Join Community
                 </button>
